@@ -1,0 +1,590 @@
+<?php
+/**
+ * @file
+ * jira_rest_api.module
+ */
+
+/**
+ * Denotes a HTTP POST method.
+ */
+define('JIRA_REST_API_HTTP_POST', 'POST');
+
+/**
+ * Denotes a HTTP GET method.
+ */
+define('JIRA_REST_API_HTTP_GET', 'GET');
+
+/**
+ * Denotes a HTTP PUT method.
+ */
+define('JIRA_REST_API_HTTP_PUT', 'PUT');
+
+/**
+ * Denotes a HTTP DELETE method.
+ */
+define('JIRA_REST_API_HTTP_DELETE', 'DELETE');
+
+/**
+ * Denotes the initial authentication phase (default).
+ */
+define('JIRA_REST_API_AUTH_PHASE_NONE', 0);
+
+/**
+ * Denotes the authentication callback phase for authenticators using the callback url.
+ */
+define('JIRA_REST_API_AUTH_PHASE_CALLBACK', 1);
+
+/**
+ * Denotes an authentication renew phase for authenticators requiring to be renewed.
+ */
+define('JIRA_REST_API_AUTH_PHASE_RENEW', 2);
+
+/**
+ * Implements hook_menu().
+ */
+function jira_rest_api_menu() {
+  $items = array();
+  $items['admin/config/services/jira-rest-api'] = array(
+    'title' => 'Jira REST API',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('jira_rest_api_admin_clients_form'),
+    'file' => 'jira_rest_api.pages.inc',
+  );
+  $items['admin/config/services/jira-rest-api/settings'] = array(
+    'title' => 'Settings',
+    'description' => 'Manage Jira REST API authentication and settings.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('jira_rest_api_admin_settings_form'),
+    'file' => 'jira_rest_api.pages.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['admin/config/services/jira-rest-api/clients'] = array(
+    'title' => 'Clients',
+    'description' => 'Manage Jira REST API authenticated clients and settings.',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['admin/config/services/jira-rest-api/clients/add'] = array(
+    'title' => 'Add a client',
+    'description' => 'Create a new client to connect to a JIRA instance.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'jira_rest_api_admin_client_add',
+    'file' => 'jira_rest_api.pages.inc',
+    'type' => MENU_LOCAL_ACTION,
+  );
+  $items['admin/config/services/jira-rest-api/clients/manage/%jira_rest_api_client'] = array(
+    'title' => 'Manage client',
+    'description' => 'Manage a single Jira REST API client.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'jira_rest_api_admin_client_edit',
+    'page arguments' => array(6),
+    'file' => 'jira_rest_api.pages.inc',
+  );
+  $items['admin/config/services/jira-rest-api/clients/manage/%jira_rest_api_client/edit'] = array(
+    'title' => 'Edit',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['admin/config/services/jira-rest-api/clients/manage/%jira_rest_api_client/delete'] = array(
+    'title' => 'Delete',
+    'description' => 'Delete the Jira REST API client upon confirmation.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('jira_rest_api_admin_client_delete', 6),
+    'file' => 'jira_rest_api.pages.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 10,
+  );
+  $items['admin/config/services/jira-rest-api/clients/manage/%jira_rest_api_client/test'] = array(
+    'title' => 'Test authentication',
+    'description' => 'Test authentication details by performing a simple authentication call to the Jira REST API.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'jira_rest_api_admin_client_test',
+    'page arguments' => array(6),
+    'file' => 'jira_rest_api.pages.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 20,
+  );
+  $items['jira-rest-api/authentication-callback/%jira_rest_api_client'] = array(
+    'title' => 'Authentication callback handler',
+    'description' => 'Callback handler for Jira REST API authentication methods.',
+    'access arguments' => array('administer jira-rest-api'),
+    'page callback' => 'jira_rest_api_authentication_callback',
+    'page arguments' => array(2),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function jira_rest_api_permission() {
+  $permissions = array();
+  $permissions['administer jira-rest-api'] = array(
+    'title' => t('Administer JIRA REST API'),
+  );
+  return $permissions;
+}
+
+/**
+ * Performs a request to the Jira client instance's REST API.
+ *
+ * @param JiraRestApiClient $client
+ *   The client instance to perform the request with.
+ *
+ * @param string $resource_path
+ *   The resource path to request. While the full endpoint for a resource may
+ *   be /rest/api/2/myself, this path specification is only `myself` as the
+ *   /rest/api/2/ is prepended.
+ *
+ * @param array $parameters
+ *   An array of parameters to specify during the operation.
+ *
+ * @param string $http_method
+ *   The HTTP Method of the request. Default value is JIRA_REST_API_HTTP_GET.
+ *
+ * @param bool $is_rest_endpoint
+ *   A boolean indicating whether or not the resource is an actual REST API
+ *   endpoint or not. In most cases this should always be TRUE, however, during
+ *   OAuth authentication this should be false as we do not want the resource
+ *   path prefixed with `/rest/api/2/`.
+ *
+ * @return mixed
+ *   Returns the response object received from `drupal_http_request()` if the
+ *   request was invoked even though an error may have occurred during the
+ *   operation. As a result, it is recommended that the caller of this function
+ *   accounts for possible errors.
+ *
+ * @throws Exception
+ *   * Throws any exceptions caught while the request is being signed by the
+ *     authenticator or altered by other modules.
+ *   * Throws an exception if the client's authenticator object is not set and
+ *     cannot be retrieved.
+ */
+function jira_rest_api_request(JiraRestApiClient $client, $resource_path, array $parameters = array(), $http_method = JIRA_REST_API_HTTP_GET, $is_rest_endpoint = TRUE) {
+  $authenticator = $client->getAuthenticator();
+  if (!$authenticator) {
+    throw new Exception(t('Failed to retrieve authenticator for client %client as it does not appear to be set.', array(
+      '%client' => $client->getLabel(),
+    )));
+  }
+
+  $base_url = rtrim($client->getBaseUrl(), '/') . (($is_rest_endpoint) ? '/rest/api/2/' : '/');
+  $resource_path = trim($resource_path, '/');
+
+  $request = (object) array(
+    'url' => $base_url . $resource_path,
+    'options' => array(
+      'headers' => array('Content-Type' => 'application/json'),
+      'method' => $http_method,
+      'max_redirects' => jira_rest_api_http_request_max_redirects(),
+      'timeout' => jira_rest_api_http_request_timeout(),
+    ),
+    'parameters' => $parameters,
+  );
+
+  try {
+    // Attempt to sign the request using the authenticator and catch any
+    // exceptions that may be thrown.
+    $authenticator->signRequest($request, $parameters, $resource_path);
+    // Allow other modules to alter the signed request object prior to
+    // performing the actual HTTP request.
+    drupal_alter('jira_rest_api_request', $request);
+  }
+  catch (Exception $exception) {
+    jira_rest_api_log_exception($exception);
+    throw $exception;
+  }
+
+  switch ($request->options['method']) {
+    case JIRA_REST_API_HTTP_GET:
+      $request->url = $request->url . '?' . drupal_http_build_query($request->parameters);
+      break;
+  }
+
+  $response = drupal_http_request($request->url, $request->options);
+  // If the HTTP request timed out during its operation, log this event.
+  if (HTTP_REQUEST_TIMEOUT == $response->code) {
+    jira_rest_api_log(WATCHDOG_DEBUG, 'The HTTP request to the following URL %url timed out with Jira REST API client %client.', array('%url' => $request->url, '%client' => $client->getLabel()));
+  }
+  // Attempt to parse the response message body contents depending on the data's
+  // content type header value. However, because the this content may have
+  // multiple parts, assume that the first part will be the type.
+  if (!empty($response->data) && !empty($response->headers['content-type'])) {
+    $header_parts = explode(';', $response->headers['content-type']);
+    switch ($header_parts[0]) {
+      case 'application/json':
+        $response->data = drupal_json_decode($response->data);
+        break;
+      case 'application/x-www-form-urlencode':
+        $response->data = @urldecode($response->data);
+        break;
+      case 'text/plain':
+        $return = array();
+        parse_str($response->data, $return);
+        $response->data = $return;
+        break;
+    }
+  }
+  return $response;
+}
+
+/**
+ * Returns the seconds allowed to perform a HTTP request before timing out.
+ *
+ * @return int
+ *   The maximum number of seconds allowed.
+ */
+function jira_rest_api_http_request_timeout() {
+  return variable_get('jira_rest_api_http_request_timeout', 60);
+}
+
+/**
+ * Returns the maximum redirects allowed during an HTTP request operation.
+ *
+ * @return int
+ *   The maximum number of redirects allowed.
+ */
+function jira_rest_api_http_request_max_redirects() {
+  return variable_get('jira_rest_api_http_request_max_redirects', 1);
+}
+
+/**
+ * Loads the JiraRestApiClient instance with the specified identifier.
+ *
+ * @param int $cid
+ *   The client's identifier (primary key).
+ * @param bool $reset
+ *   A boolean indicating whether or not the statically cached instance should
+ *   be refreshed. Default value is FALSE.
+ *
+ * @return mixed
+ *   Returns the JiraRestApiClient instance if it exists otherwise returns
+ *   FALSE.
+ *
+ * @see jira_rest_api_client_load().
+ */
+function jira_rest_api_client_load_by_id($cid, $reset = FALSE) {
+  $static_fast_cache = &jira_rest_api_clients_static();
+  if (!isset($static_fast_cache['data'][$cid]) || $reset) {
+    $query = db_select('jira_rest_api_clients', 'c')
+      ->fields('c')
+      ->condition('cid', $cid)
+      ->execute();
+    if ($object = $query->fetchObject()) {
+      $client = JiraRestApiClient::fromObject($object);
+      $static_fast_cache['names'][$client->getName()] = $client->getIdentifier();
+      $static_fast_cache['data'][$client->getIdentifier()] = $client;
+    }
+    else {
+      $static_fast_cache['data'][$cid] = FALSE;
+    }
+  }
+  return $static_fast_cache['data'][$cid];
+}
+
+/**
+ * Loads the JiraRestApiClient instance with the specified machine name.
+ *
+ * @param string $name
+ *   The machine name of the client to load.
+ * @param bool $reset
+ *   A boolean indicating whether or not the statically cached instance should
+ *   be refreshed. Default value is FALSE.
+ *
+ * @return JiraRestApiClient
+ *   Returns the JiraRestApiClient instance if it exists otherwise returns
+ *   FALSE.
+ *
+ * @see jira_rest_api_client_load_by_id().
+ * @see jira_rest_api_menu().
+ */
+function jira_rest_api_client_load($name, $reset = FALSE) {
+  $static_fast_cache = &jira_rest_api_clients_static();
+  if (!isset($static_fast_cache['names'][$name]) || $reset) {
+    $cid = db_query("SELECT cid FROM {jira_rest_api_clients} WHERE name = :name", array(':name' => $name))->fetchField();
+    if ($cid) {
+      return jira_rest_api_client_load_by_id($cid, $reset);
+    }
+    else {
+      $static_fast_cache['names'][$name] = FALSE;
+    }
+  }
+  return FALSE;
+}
+
+/**
+ * Return the statically cached JiraRestApiClient instances.
+ *
+ * @return array
+ *   The statically cached instances, returned by reference.
+ */
+function &jira_rest_api_clients_static() {
+  $static_fast_cache = &drupal_static('jira_rest_api', NULL);
+  if (NULL === $static_fast_cache) {
+    $static_fast_cache = array(
+      'names' => array(),
+      'data' => array(),
+    );
+  }
+  return $static_fast_cache;
+}
+
+/**
+ * Resets the static cached JiraRestApiClient instances.
+ */
+function jira_rest_api_clients_static_reset() {
+  drupal_static_reset('jira_rest_api');
+  // Re-initialize the static cache array in the event that `drupal_static` is
+  // being called instead of `jira_rest_api_clients_static()`.
+  jira_rest_api_clients_static();
+}
+
+/**
+ * Saves the specified JiraRestApiClient instance to the database.
+ *
+ * @param JiraRestApiClient $client
+ *   The client instance to save.
+ *
+ * @return mixed
+ *   Returns SAVED_NEW or SAVED_UPDATED depending on the operation if the client
+ *   instance was successfully saved, otherwise returns FALSE.
+ *
+ * @throws Exception
+ *   Throws an caught exception.
+ *
+ * @see hook_jira_rest_api_client_insert().
+ * @see hook_jira_rest_api_client_delete().
+ */
+function jira_rest_api_client_save(JiraRestApiClient $client) {
+  $return = FALSE;
+  $transaction = db_transaction();
+  try {
+    $object = $client->toObject();
+    $is_new = empty($object->cid);
+
+    if ($is_new) {
+      $op = 'insert';
+      $return = drupal_write_record('jira_rest_api_clients', $object);
+      $client->setIdentifier($object->cid);
+    }
+    else {
+      $op = 'update';
+      $return = drupal_write_record('jira_rest_api_clients', $object, 'cid');
+    }
+    module_invoke_all('jira_rest_api_client_' . $op, $client);
+    db_ignore_slave();
+  }
+  catch (Exception $exception) {
+    $transaction->rollback();
+    jira_rest_api_log_exception($exception);
+    throw $exception;
+  }
+
+  return $return;
+}
+
+/**
+ * Deletes the specified client instance.
+ *
+ * @param JiraRestApiClient $client
+ *   The client instance to delete.
+ * @param bool $deauthenticate
+ *   A boolean indicating whether or not the client's authentication should be
+ *   deauthenticating as part of the deletion.
+ *
+ * @throws Exception
+ *   Throws an caught exception.
+ *
+ * @see hook_jira_rest_api_client_delete().
+ */
+function jira_rest_api_client_delete(JiraRestApiClient $client, $deauthenticate = TRUE) {
+  if ($deauthenticate && $authenticator = $client->getAuthenticator()) {
+    $authenticator->deauthenticate();
+  }
+
+  if ($identifier = $client->getIdentifier()) {
+    try {
+      db_delete('jira_rest_api_clients')
+        ->condition('cid', $identifier)
+        ->execute();
+      module_invoke_all('jira_rest_api_client_delete', $client);
+    }
+    catch (Exception $exception) {
+      jira_rest_api_log_exception($exception);
+      throw $exception;
+    }
+  }
+}
+
+/**
+ * Returns the authentication callback url for a specified client.
+ *
+ * @param JiraRestApiClient $client
+ *   The client instance to retrieve the authentication callback url for.
+ *
+ * @return string
+ *   The authentication callback url.
+ */
+function jira_rest_api_authentication_callback_url(JiraRestApiClient $client) {
+  return url('jira-rest-api/authentication-callback/' . $client->getName(), array(
+    'absolute' => TRUE,
+  ));
+}
+
+/**
+ * Returns a boolean indicating if a client already has the specified name.
+ *
+ * @param string $value
+ *   The value to test whether it exists as a client machine name or not.
+ *
+ * @return bool
+ *   Returns TRUE if the specified $value exists as a client machine name,
+ *   otherwise it returns FALSE.
+ */
+function jira_rest_api_client_machine_name_exists($value) {
+  return (bool) db_query_range('SELECT 1 FROM {jira_rest_api_clients} WHERE name = :name', 0, 1, array(':name' => $value))->fetchField();
+}
+
+/**
+ * Implements hook_jira_rest_api_client_operations().
+ */
+function jira_rest_api_jira_rest_api_client_operations() {
+  return array(
+    'delete' => t('Delete selected clients'),
+  );
+}
+
+/**
+ * Returns available authenticators.
+ *
+ * @param bool $reset
+ *   A boolean indicating whether or not the static cache should be reset. The
+ *   default value is FALSE.
+ *
+ * @return array
+ *   An associative array of authenticators defined. The array is keyed by the
+ *   authenticator's machine name (e.g. http_basic).
+ *
+ * @see hook_jira_rest_api_authenticator().
+ */
+function jira_rest_api_authenticators($reset = FALSE) {
+  static $static_fast_cache = NULL;
+  if (NULL === $static_fast_cache || $reset) {
+    $static_fast_cache = array();
+    foreach (module_implements('jira_rest_api_authenticator') as $module) {
+      foreach (module_invoke($module, 'jira_rest_api_authenticator') as $name => $info) {
+        $info += array(
+          'name' => $name,
+          'label' => $name,
+          'form callback' => '',
+          'file' => $module . '.module',
+          'file path' => drupal_get_path('module', $module),
+          'module' => $module,
+        );
+        $static_fast_cache[$info['name']] = $info;
+      }
+    }
+  }
+  return $static_fast_cache;
+}
+
+/**
+ * Implements hook_jira_rest_api_authenticator().
+ */
+function jira_rest_api_jira_rest_api_authenticator() {
+  return array(
+    'http_basic' => array(
+      'label' => t('HTTP Basic Authentication'),
+      'form callback' => 'jira_rest_api_authenticator_http_basic_client_settings_form',
+      'handler' => 'JiraRestApiClientAuthenticatorHttpBasicAuth',
+      'file' => 'jira_rest_api.authenticators.inc',
+      'file path' => drupal_get_path('module', 'jira_rest_api') . '/includes',
+    ),
+    'oauth_1_0' => array(
+      'label' => t('OAuth 1.0'),
+      'form callback' => 'jira_rest_api_authenticator_oauth_1_0_client_settings_form',
+      'handler' => 'JiraRestApiClientAuthenticatorOAuth',
+      'file' => 'jira_rest_api.authenticators.inc',
+      'file path' => drupal_get_path('module', 'jira_rest_api') . '/includes',
+    ),
+  );
+}
+
+/**
+ * Authentication callback for authenticators requiring a callback (e.g. OAuth).
+ *
+ * @param JiraRestApiClient $client
+ *   The Jira REST API client instance being authenticated.
+ */
+function jira_rest_api_authentication_callback(JiraRestApiClient $client) {
+  if (!isset($_SESSION['jira_rest_api'])) {
+    return drupal_access_denied();
+  }
+
+  $session_data = $_SESSION['jira_rest_api'];
+  unset($_SESSION['jira_rest_api']);
+
+  _jira_rest_api_authentication_flow($client, JIRA_REST_API_AUTH_PHASE_CALLBACK, $session_data);
+  $redirect_url = isset($session_data['redirect']) ? $session_data['redirect'] : url('admin/config/services/jira-rest-api/clients');
+  return drupal_goto($redirect_url);
+}
+
+/**
+ * Internal helper function for handling the authentication flow.
+ *
+ * @param JiraRestApiClient $client
+ *   The client that is performing authentication.
+ * @param int $phase
+ *   The authentication phase.
+ *
+ * @param array $context
+ *   Any contextual information for the authentication flow.
+ */
+function _jira_rest_api_authentication_flow(JiraRestApiClient $client, $phase, array $context = array()) {
+  if ($authenticator = $client->getAuthenticator()) {
+    try {
+      if ($authenticator->authenticate($phase, $context)) {
+        drupal_set_message(t('You have successfully authenticated the %client Jira REST API client.', array(
+          '%client' => $client->getLabel(),
+        )));
+      }
+    }
+    catch (Exception $exception) {
+      jira_rest_api_log_exception($exception);
+      drupal_set_message(t('An error has occurred while attempting to authenticate the Jira REST API client %client.', array('%client' => $client->getLabel())), 'error');
+    }
+  }
+  else {
+    drupal_set_message(t('Unable to retrieve authenticator instance for client %client.', array('%client' => $client->getLabel())));
+  }
+}
+
+/**
+ * Watchdog log for standard string message.
+ *
+ * @param int $severity
+ *   The log item severity.
+ * @param string $message
+ *   The log item message.
+ * @param array $variables
+ *   An array of string replacement variables for the message.
+ */
+function jira_rest_api_log($severity, $message, array $variables = array()) {
+  // If the severity level is DEBUG and debug mode is not enabled, exit early.
+  if (WATCHDOG_DEBUG == $severity && !variable_get('jira_rest_api_debug', FALSE)) {
+    return;
+  }
+  return watchdog('jira_rest_api', $message, $variables, $severity);
+}
+
+/**
+ * Watchdog log for an exception error.
+ *
+ * @param Exception $exception
+ *   The exception to log.
+ */
+function jira_rest_api_log_exception(Exception $exception) {
+  return watchdog_exception('jira_rest_api', $exception);
+}

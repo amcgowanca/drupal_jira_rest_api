@@ -1,0 +1,94 @@
+<?php
+/**
+ * @file
+ * jira_rest_api.install
+ */
+
+/**
+ * Implements hook_install().
+ */
+function jira_rest_api_install() {
+  variable_set('jira_rest_api_debug', FALSE);
+  variable_set('jira_rest_api_http_request_max_redirects', 0);
+  variable_set('jira_rest_api_http_request_timeout', 60);
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function jira_rest_api_uninstall() {
+  variable_del('jira_rest_api_debug');
+  variable_del('jira_rest_api_http_request_max_redirects');
+  variable_del('jira_rest_api_http_request_timeout');
+}
+
+/**
+ * Implements hook_schema().
+ */
+function jira_rest_api_schema() {
+  $schema = array();
+  $schema['jira_rest_api_clients'] = array(
+    'description' => 'Base table for authentication information related to clients.',
+    'fields' => array(
+      'cid' => array(
+        'description' => 'The primary key for a client.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'name' => array(
+        'description' => 'The machine-name identifier for this client.',
+        'type' => 'varchar',
+        'length' => 255,
+        'unique' => TRUE,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'label' => array(
+        'description' => 'The human readable label for this client.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'base_url' => array(
+        'description' => 'The base URL of the Jira instance this client authenticates with.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'auth_type_name' => array(
+        'description' => 'The machine name of the authentication type used by this client.',
+        'type' => 'varchar',
+        'length' => 125,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'data' => array(
+        'description' => 'Stores various pieces of data regarding this client.',
+        'type' => 'blob',
+        'size' => 'big',
+        'serialize' => TRUE,
+        'not null' => FALSE,
+      ),
+      'locked' => array(
+        'description' => 'A boolean indicating whether or not this instance can be deleted.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('cid'),
+    'unique keys' => array(
+      'name' => array('name'),
+    ),
+    'indexes' => array(
+      'client_name' => array('name'),
+      'auth_type_name' => array('auth_type_name'),
+      'locked' => array('locked'),
+    ),
+  );
+  return $schema;
+}

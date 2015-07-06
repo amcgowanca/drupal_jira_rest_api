@@ -1,0 +1,10 @@
+name = Atlassian Jira REST API
+description = Provides helper and utility functions for working with Atlassian's Jira REST API.
+core = 7.x
+version = 7.x-1.x
+
+files[] = includes/OAuth.php
+files[] = includes/JiraRestApiClient.inc
+files[] = includes/JiraRestApiClientAuthenticator.inc
+files[] = includes/JiraRestApiClientAuthenticatorInterface.inc
+files[] = includes/JiraRestApiOAuthSignatureMethod_RSA_SHA1.inc
