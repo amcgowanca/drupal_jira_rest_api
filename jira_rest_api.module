@@ -190,7 +190,7 @@ function jira_rest_api_request(JiraRestApiClient $client, $resource_path, array 
     $authenticator->signRequest($request, $parameters, $resource_path);
     // Allow other modules to alter the signed request object prior to
     // performing the actual HTTP request.
-    drupal_alter('jira_rest_api_request', $request);
+    drupal_alter('jira_rest_api_request', $request, $client);
   }
   catch (Exception $exception) {
     jira_rest_api_log_exception($exception);

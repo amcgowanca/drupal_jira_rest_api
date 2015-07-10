@@ -32,8 +32,11 @@ function hook_jira_rest_api_client_operations_alter(array &$operations) {
  *
  * @param object $request
  *   The HTTP request object to alter.
+ *
+ * @param JiraRestApiClient $client
+ *   The Jira client instance making this request.
  */
-function hook_jira_rest_api_request_alter(&$request) {
+function hook_jira_rest_api_request_alter(&$request, JiraRestApiClient $client) {
   $request->options['timeout'] = 60;
 }
 
