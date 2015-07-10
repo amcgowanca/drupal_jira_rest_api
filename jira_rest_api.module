@@ -199,7 +199,9 @@ function jira_rest_api_request(JiraRestApiClient $client, $resource_path, array 
 
   switch ($request->options['method']) {
     case JIRA_REST_API_HTTP_GET:
-      $request->url = $request->url . '?' . drupal_http_build_query($request->parameters);
+      if (!empty($request->parameters)) {
+        $request->url = $request->url . '?' . drupal_http_build_query($request->parameters);
+      }
       break;
   }
 
