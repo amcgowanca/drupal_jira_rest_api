@@ -233,6 +233,19 @@ function jira_rest_api_request(JiraRestApiClient $client, $resource_path, array 
 }
 
 /**
+ * Implements hook_jira_rest_api_request_alter().
+ */
+function jira_rest_api_jira_rest_api_request_alter(&$request, JiraRestApiClient $client) {
+  if ($authenticator = $client->getAuthenticator()) {
+    if ('oauth_1_0' == $authenticator->getType()) {
+      if (JIRA_REST_API_HTTP_GET == $request->options['method'] && !empty($request->parameters)) {
+        $request->parameters = array();
+      }
+    }
+  }
+}
+
+/**
  * Returns the seconds allowed to perform a HTTP request before timing out.
  *
  * @return int
