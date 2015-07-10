@@ -193,7 +193,7 @@ class JiraRestApiClientAuthenticatorOAuth extends JiraRestApiClientAuthenticator
 
     $oauth_request = OAuthRequest::from_consumer_and_token($consumer, $oauth_token, $request->options['method'], $request->url, $parameters);
     $signature_method = new JiraRestApiOAuthSignatureMethod_RSA_SHA1($client);
-    $oauth_request->sign_request($signature_method, $consumer, $token);
+    $oauth_request->sign_request($signature_method, $consumer, $oauth_token);
     $request->url = $oauth_request->to_url();
   }
 
